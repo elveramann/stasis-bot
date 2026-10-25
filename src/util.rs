@@ -1,8 +1,8 @@
 use anyhow::bail;
-use azalea::core::aabb::AABB;
+use azalea::core::aabb::Aabb;
 use azalea::core::direction::Direction;
 use azalea::ecs::entity::Entity;
-use azalea::entity::{EyeHeight, LookDirection, Pose, Position};
+use azalea::entity::{LookDirection, Pose, Position, dimensions::EntityDimensions};
 use azalea::inventory::ItemStack;
 use azalea::inventory::components::MaxStackSize;
 use azalea::inventory::item::MaxStackSizeExt;
@@ -18,28 +18,23 @@ pub fn player_eye_pos(bot: &Client, entity: Entity) -> Option<Vec3> {
     let mut bot = bot.clone();
     let pos = bot.get_entity_component::<Position>(entity);
     let pose = bot.get_entity_component::<Pose>(entity);
-    let eye_height = bot.get_entity_component::<EyeHeight>(entity);
+    let dimensions = bot.get_entity_component::<EntityDimensions>(entity);
 
-    if let (Some(pos), Some(pose), Some(eye_height)) = (pos, pose, eye_height) {
-        Some(calculate_player_eye_pos(&pos, &pose, &eye_height))
+    if let (Some(pos), Some(pose), Some(dimensions)) = (pos, pose, dimensions) {
+        Some(calculate_player_eye_pos(&pos, &pose, dimensions.eye_height))
     } else {
         None
     }
 }
 
-pub fn calculate_player_eye_pos(pos: &Position, pose: &Pose, eye_height: &EyeHeight) -> Vec3 {
-    let y_offset = match pose {
-        Pose::FallFlying | Pose::Swimming | Pose::SpinAttack => 0.5f64,
-        Pose::Sleeping => 0.25f64,
-        Pose::Sneaking => f64::from(*eye_height) * 0.85,
-        _ => f64::from(*eye_height),
-    };
+pub fn calculate_player_eye_pos(pos: &Position, _pose: &Pose, eye_height: f32) -> Vec3 {
+    let y_offset = f64::from(eye_height);
     Vec3::from(pos) + Vec3::new(0.0, y_offset, 0.0)
 }
 
 pub fn max_stack_size(stack: &ItemStack) -> i32 {
     if let Some(data) = stack.as_present() {
-        if let Some(max_stack_size) = data.components.get::<MaxStackSize>() {
+        if let Some(max_stack_size) = data.component_patch.get::<MaxStackSize>() {
             max_stack_size.count
         } else {
             data.kind.max_stack_size()
@@ -49,14 +44,14 @@ pub fn max_stack_size(stack: &ItemStack) -> i32 {
     }
 }
 
-pub fn aabb_from_blockpos(pos: &BlockPos) -> AABB {
-    AABB {
+pub fn aabb_from_blockpos(pos: &BlockPos) -> Aabb {
+    Aabb {
         min: pos.to_vec3_floored(),
         max: pos.to_vec3_floored() + Vec3::new(1.0, 1.0, 1.0),
     }
 }
 
-pub fn squared_magnitude(aabb: AABB, pos: Vec3) -> f64 {
+pub fn squared_magnitude(aabb: Aabb, pos: Vec3) -> f64 {
     let closest_x = (aabb.min.x - pos.x).max(pos.x - aabb.max.x).max(0.0);
     let closest_y = (aabb.min.y - pos.y).max(pos.y - aabb.max.y).max(0.0);
     let closest_z = (aabb.min.z - pos.z).max(pos.z - aabb.max.z).max(0.0);
@@ -130,7 +125,7 @@ impl Goal for InteractableGoal {
     }
 }
 
-pub fn closest_aabb_pos_towards(pos: Vec3, target_box: AABB, dist_to_edges: f64) -> Vec3 {
+pub fn closest_aabb_pos_towards(pos: Vec3, target_box: Aabb, dist_to_edges: f64) -> Vec3 {
     let dist_x = ((target_box.max.x - target_box.min.x) / 2.0).min(dist_to_edges);
     let dist_y = ((target_box.max.y - target_box.min.y) / 2.0).min(dist_to_edges);
     let dist_z = ((target_box.max.z - target_box.min.z) / 2.0).min(dist_to_edges);
@@ -147,8 +142,8 @@ pub fn closest_aabb_pos_towards(pos: Vec3, target_box: AABB, dist_to_edges: f64)
 }
 
 pub fn rotation_vec(look_dir: LookDirection) -> Vec3 {
-    let pitch_rad: f64 = (look_dir.x_rot as f64).to_radians();
-    let yaw_rad: f64 = -(look_dir.y_rot as f64).to_radians();
+    let pitch_rad: f64 = (look_dir.x_rot() as f64).to_radians();
+    let yaw_rad: f64 = -(look_dir.y_rot() as f64).to_radians();
     let yaw_rad_cos: f64 = yaw_rad.cos();
     let yaw_rad_sin: f64 = yaw_rad.sin();
     let pitch_rad_cos: f64 = pitch_rad.cos();
@@ -159,7 +154,7 @@ pub fn rotation_vec(look_dir: LookDirection) -> Vec3 {
 /// Prevent Grim Modulo360 flag (not fully yet)
 /// Not sure which is better, yet. Forcing 0 to 360 or -180 to 180
 pub fn fix_look_direction(look_direction: LookDirection) -> LookDirection {
-    let mut yaw = look_direction.y_rot % 360.0;
+    let mut yaw = look_direction.y_rot() % 360.0;
     // Force -180 to 180:
     if yaw >= 180.0 {
         yaw -= 360.0;
@@ -168,7 +163,7 @@ pub fn fix_look_direction(look_direction: LookDirection) -> LookDirection {
     /*if yaw < 0.0 {
         yaw += 360.0;
     }*/
-    LookDirection::new(yaw, look_direction.x_rot)
+    LookDirection::new(yaw, look_direction.x_rot())
 }
 
 pub fn fixed_look_direction(yaw: f32, pitch: f32) -> LookDirection {
@@ -177,7 +172,7 @@ pub fn fixed_look_direction(yaw: f32, pitch: f32) -> LookDirection {
 
 /// I might change this, so one place for all
 pub fn nice_blockhit_look(eye_pos: &Vec3, block_pos: &BlockPos) -> LookDirection {
-    fix_look_direction(azalea::direction_looking_at(eye_pos, &block_pos.center()))
+    fix_look_direction(azalea::bot::direction_looking_at(*eye_pos, block_pos.center()))
 }
 
 /// I might change this, so one place for all
@@ -191,8 +186,8 @@ pub fn nice_blockhit(eye_pos: &Vec3, block_pos: &BlockPos) -> anyhow::Result<(Lo
     let mut hit_inside_block = None;
     for dist in 0..100 {
         let dist = (dist as f64) / 10.0;
-        let maybe_inside_block = eye_pos + &rot_vec_norm.multiply(dist, dist, dist);
-        if block_aabb.contains(&maybe_inside_block) {
+        let maybe_inside_block = *eye_pos + rot_vec_norm.multiply(dist, dist, dist);
+        if block_aabb.contains(maybe_inside_block) {
             hit_inside_block = Some(maybe_inside_block);
             break;
         }

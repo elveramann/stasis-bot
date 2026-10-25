@@ -2,7 +2,7 @@ use crate::BotState;
 use crate::task::{Task, TaskOutcome};
 use anyhow::anyhow;
 use azalea::entity::{LookDirection, Position};
-use azalea::packet::game::SendPacketEvent;
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::protocol::packets::game::{ClientboundGamePacket, ServerboundGamePacket, ServerboundPingRequest};
 use azalea::{BlockPos, Client, Event, Vec3, WalkDirection};
 use rand::Rng;
@@ -30,7 +30,7 @@ impl LookTowardsCenterPlugin {
     fn look_towards_block_center(mut data: Query<(/*Entity,*/ &Position, &mut LookDirection, &LookTowardsCenterComponent), With<LocalEntity>>) {
         for (own_pos, mut look_direction, center) in &mut data {
             let target_pos = center.block_pos.to_vec3_floored() + Vec3::new(0.5, 0.0, 0.5);
-            let yaw_to_center = azalea::direction_looking_at(&Vec3::new(own_pos.x, 0.0, own_pos.z), &Vec3::new(target_pos.x, 0.0, target_pos.z)).y_rot;
+            let yaw_to_center = azalea::bot::direction_looking_at(Vec3::new(own_pos.x, 0.0, own_pos.z), Vec3::new(target_pos.x, 0.0, target_pos.z)).y_rot();
             *look_direction = util::fixed_look_direction(yaw_to_center, 45.0);
             trace!("Updated look towards center!");
         }
@@ -122,10 +122,10 @@ impl Task for CenterTask {
                         let desired_dist = if self.attempt < 8 { 0.1 } else { 0.12 }; // 0.12 seems fine by grim
 
                         let yaw_to_center =
-                            azalea::direction_looking_at(&Vec3::new(own_pos.x, 0.0, own_pos.z), &Vec3::new(target_pos.x, 0.0, target_pos.z)).y_rot;
+                            azalea::bot::direction_looking_at(Vec3::new(own_pos.x, 0.0, own_pos.z), Vec3::new(target_pos.x, 0.0, target_pos.z)).y_rot();
                         *bot.ecs.lock().get_mut::<LookDirection>(bot.entity).ok_or(anyhow!("No lookdir"))? = LookDirection::new(yaw_to_center, 45.0);
 
-                        let dist = own_pos.distance_to(&target_pos);
+                        let dist = own_pos.distance_to(target_pos);
                         if dist <= desired_dist {
                             // Good enough, do mini teleport now
                             debug!("Got in close enough at attempt {}. {dist} blocks remain. Doing mini teleport!", self.attempt);
@@ -145,7 +145,7 @@ impl Task for CenterTask {
                         let own_pos = Vec3::from(&bot.component::<Position>());
                         let walk_away = self.attempt == 4 || self.attempt == 18;
                         let target_pos = self.block_pos.to_vec3_floored() + Vec3::new(0.5, 0.0, 0.5);
-                        if (!walk_away && own_pos.distance_to(&target_pos) <= 0.3) || walk_away && own_pos.distance_to(&target_pos) >= 0.1999 {
+                        if (!walk_away && own_pos.distance_to(target_pos) <= 0.3) || walk_away && own_pos.distance_to(target_pos) >= 0.1999 {
                             bot.walk(WalkDirection::None);
                             self.state = CenterState::WaitForStandstill { last_pos: Some(own_pos) };
                         }
@@ -167,7 +167,7 @@ impl Task for CenterTask {
                     } => {
                         if sent_ping_id.is_none() {
                             let ping_id = i64::MIN + rand::rng().random_range(0..i64::MAX / 4);
-                            bot.ecs.lock().send_event(SendPacketEvent {
+                            bot.ecs.lock().trigger(SendGamePacketEvent {
                                 sent_by: bot.entity,
                                 packet: ServerboundGamePacket::PingRequest(ServerboundPingRequest { time: ping_id as u64 }),
                             });

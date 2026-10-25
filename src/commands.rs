@@ -5,24 +5,27 @@ use crate::task::group::TaskGroup;
 use crate::task::pathfind::PathfindTask;
 use crate::{BotState, DEVNET_TX, OPTS, devnet, util};
 use anyhow::{Context, anyhow};
-use azalea::blocks::Block;
+use azalea::block::BlockTrait as Block;
 use azalea::core::direction::Direction;
 use azalea::entity::LookDirection;
 use azalea::inventory::operations::ClickType;
-use azalea::inventory::{Inventory, ItemStack, SetSelectedHotbarSlotEvent};
-use azalea::packet::game::SendPacketEvent;
+use azalea::inventory::{Inventory, SetSelectedHotbarSlotEvent};
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::protocol::packets::game::s_player_action::Action;
-use azalea::protocol::packets::game::{ServerboundContainerClick, ServerboundGamePacket, ServerboundPlayerAction, ServerboundSetCarriedItem};
+use azalea::protocol::packets::game::{
+    ServerboundContainerClick, ServerboundGamePacket, ServerboundPlayerAction, ServerboundSetCarriedItem, s_container_click::HashedStack,
+};
 use azalea::registry::Item;
 use azalea::{
-    BlockPos, GameProfileComponent, Vec3,
+    BlockPos, Vec3,
     ecs::query::With,
     entity::{Position, metadata::Player},
     pathfinder::goals::BlockPosGoal,
+    player::GameProfileComponent,
     prelude::*,
     world::InstanceName,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ops::Add;
 use uuid::Uuid;
 
@@ -201,7 +204,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                 return Ok(true);
             };
 
-            let sender_entity = bot.entity_by::<With<Player>, (&GameProfileComponent,)>(|(profile,): &(&GameProfileComponent,)| profile.name == sender);
+            let sender_entity = bot.any_entity_by::<&GameProfileComponent, With<Player>>(|profile: &GameProfileComponent| profile.name == sender);
             if sender_entity.is_none() {
                 feedback(&format!("I can't find you!"));
                 return Ok(true);
@@ -219,23 +222,23 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                         for z in -4..=4 {
                             let pos = sender_pos.to_block_pos_floor().add(BlockPos::new(x, y, z));
                             if world
-                                .get_block_state(&pos)
+                                .get_block_state(pos)
                                 .map(|state| Box::<dyn Block>::from(state).id().ends_with("_button"))
                                 .unwrap_or(false)
                             {
                                 if button
-                                    .map(|b| b.center().horizontal_distance_squared_to(&sender_pos) > pos.center().horizontal_distance_squared_to(&sender_pos))
+                                    .map(|b| b.center().horizontal_distance_squared_to(sender_pos) > pos.center().horizontal_distance_squared_to(sender_pos))
                                     .unwrap_or(true)
                                 {
                                     button = Some(pos);
                                 }
                             } else if world
-                                .get_block_state(&pos)
+                                .get_block_state(pos)
                                 .map(|state| Box::<dyn Block>::from(state).id().ends_with("lectern"))
                                 .unwrap_or(false)
                             {
                                 if lectern
-                                    .map(|l| l.center().horizontal_distance_squared_to(&sender_pos) > pos.center().horizontal_distance_squared_to(&sender_pos))
+                                    .map(|l| l.center().horizontal_distance_squared_to(sender_pos) > pos.center().horizontal_distance_squared_to(sender_pos))
                                     .unwrap_or(true)
                                 {
                                     lectern = Some(pos);
@@ -357,7 +360,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                     }
                 }
 
-                let sender_entity = bot.entity_by::<With<Player>, (&GameProfileComponent,)>(|(profile,): &(&GameProfileComponent,)| profile.name == sender);
+                let sender_entity = bot.any_entity_by::<&GameProfileComponent, With<Player>>(|profile: &GameProfileComponent| profile.name == sender);
                 if sender_entity.is_none() {
                     feedback(&format!("I can't find you!"));
                     return Ok(true);
@@ -434,7 +437,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                 return Ok(true);
             }
 
-            let sender_entity = bot.entity_by::<With<Player>, (&GameProfileComponent,)>(|(profile,): &(&GameProfileComponent,)| profile.name == sender);
+            let sender_entity = bot.any_entity_by::<&GameProfileComponent, With<Player>>(|profile: &GameProfileComponent| profile.name == sender);
             if let Some(sender_entity) = sender_entity {
                 let goal = BlockPosGoal(bot.entity_component::<Position>(sender_entity).to_block_pos_floor());
                 let tasks = bot_state.tasks();
@@ -484,7 +487,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
 
             let pos = bot.component::<Position>();
             let world_name = bot.component::<InstanceName>();
-            feedback(&format!("I'm at {:.03} {:.03} {:.03} in {}", pos.x, pos.y, pos.z, world_name.path,));
+            feedback(&format!("I'm at {:.03} {:.03} {:.03} in {}", pos.x, pos.y, pos.z, world_name.path(),));
             Ok(true)
         }
 
@@ -564,12 +567,12 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
             {
                 let mut ecs = bot.ecs.lock();
                 if index > 0 && index < 9 {
-                    ecs.send_event(SetSelectedHotbarSlotEvent {
+                    ecs.trigger(SetSelectedHotbarSlotEvent {
                         entity: bot.entity,
                         slot: index,
                     });
                 }
-                ecs.send_event(SendPacketEvent {
+                ecs.trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::SetCarriedItem(ServerboundSetCarriedItem { slot: index as u16 }),
                 });
@@ -592,7 +595,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
 
             let pitch = args[0].parse::<f32>()?;
             let look_dir = bot.component::<LookDirection>();
-            *bot.ecs.lock().get_mut(bot.entity).ok_or(anyhow!("No lookdir"))? = util::fixed_look_direction(look_dir.y_rot, pitch);
+            *bot.ecs.lock().get_mut(bot.entity).ok_or(anyhow!("No lookdir"))? = util::fixed_look_direction(look_dir.y_rot(), pitch);
             Ok(true)
         }
 
@@ -609,7 +612,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
 
             let yaw = args[0].parse::<f32>()?;
             let look_dir = bot.component::<LookDirection>();
-            *bot.ecs.lock().get_mut(bot.entity).ok_or(anyhow!("No lookdir"))? = util::fixed_look_direction(yaw, look_dir.x_rot);
+            *bot.ecs.lock().get_mut(bot.entity).ok_or(anyhow!("No lookdir"))? = util::fixed_look_direction(yaw, look_dir.x_rot());
             Ok(true)
         }
 
@@ -621,12 +624,12 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
 
             if args.is_empty() {
                 // Drop hand
-                bot.ecs.lock().send_event(SendPacketEvent {
+                bot.ecs.lock().trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::PlayerAction(ServerboundPlayerAction {
                         action: Action::DropAllItems,
                         pos: BlockPos::default(),
-                        sequence: 0,
+                        seq: 0,
                         direction: Direction::Down,
                     }),
                 });
@@ -637,7 +640,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                     let mut ecs = bot.ecs.lock();
                     for arg in args {
                         let slot = arg.parse::<i16>()?;
-                        ecs.send_event(SendPacketEvent {
+                        ecs.trigger(SendGamePacketEvent {
                             sent_by: bot.entity,
                             packet: ServerboundGamePacket::ContainerClick(ServerboundContainerClick {
                                 container_id: 0,
@@ -647,8 +650,8 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                                 button_num: 1,
                                 click_type: ClickType::Throw,
 
-                                carried_item: ItemStack::Empty,
-                                changed_slots: HashMap::default(),
+                                carried_item: HashedStack(None),
+                                changed_slots: Default::default(),
                             }),
                         });
                     }
@@ -675,7 +678,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
             {
                 let mut ecs = bot.ecs.lock();
                 for slot in &slots {
-                    ecs.send_event(SendPacketEvent {
+                    ecs.trigger(SendGamePacketEvent {
                         sent_by: bot.entity,
                         packet: ServerboundGamePacket::ContainerClick(ServerboundContainerClick {
                             container_id: 0,
@@ -685,8 +688,8 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                             button_num: 1,
                             click_type: ClickType::Throw,
 
-                            carried_item: ItemStack::Empty,
-                            changed_slots: HashMap::default(),
+                            carried_item: HashedStack(None),
+                            changed_slots: Default::default(),
                         }),
                     });
                 }
@@ -702,12 +705,12 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                 return Ok(true);
             }
 
-            bot.ecs.lock().send_event(SendPacketEvent {
+            bot.ecs.lock().trigger(SendGamePacketEvent {
                 sent_by: bot.entity,
                 packet: ServerboundGamePacket::PlayerAction(ServerboundPlayerAction {
                     action: Action::SwapItemWithOffhand,
                     pos: BlockPos::default(),
-                    sequence: 0,
+                    seq: 0,
                     direction: Direction::Down,
                 }),
             });
@@ -782,7 +785,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
 
                         if let Some(target_slot) = target_slot {
                             if !equipped_armor_slots.contains(&target_slot) && !inv_menu.slot(target_slot).map(|stack| stack.is_present()).unwrap_or(false) {
-                                ecs.send_event(SendPacketEvent {
+                                ecs.trigger(SendGamePacketEvent {
                                     sent_by: bot.entity,
                                     packet: ServerboundGamePacket::ContainerClick(ServerboundContainerClick {
                                         container_id: 0,
@@ -792,8 +795,8 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                                         button_num: 0,
                                         click_type: ClickType::QuickMove,
 
-                                        carried_item: ItemStack::Empty,
-                                        changed_slots: HashMap::default(),
+                                        carried_item: HashedStack(None),
+                                        changed_slots: Default::default(),
                                     }),
                                 });
                                 equipped_armor_slots.insert(target_slot);
@@ -821,7 +824,7 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                 let mut ecs = bot.ecs.lock();
                 for slot in 5..=8 {
                     if inv_menu.slot(slot).map(|stack| stack.is_present()).unwrap_or(false) {
-                        ecs.send_event(SendPacketEvent {
+                        ecs.trigger(SendGamePacketEvent {
                             sent_by: bot.entity,
                             packet: ServerboundGamePacket::ContainerClick(ServerboundContainerClick {
                                 container_id: 0,
@@ -831,8 +834,8 @@ pub async fn execute<F: Fn(&str) + Send + Sync + 'static>(
                                 button_num: 0,
                                 click_type: ClickType::QuickMove,
 
-                                carried_item: ItemStack::Empty,
-                                changed_slots: HashMap::default(),
+                                carried_item: HashedStack(None),
+                                changed_slots: Default::default(),
                             }),
                         });
                         total += 1;

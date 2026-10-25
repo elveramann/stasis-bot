@@ -260,19 +260,17 @@ impl Module for SoundnessModule {
                         let mut direct_id = packet.source_direct_id.to_owned();
                         let maybe_attack_type_identifier = if crate::OPTS.use_hardcoded_damage_types {
                             if attack_type_id < DAMAGE_TYPES.len() as u32 {
-                                Some(ResourceLocation {
-                                    namespace: "minecraft".to_owned(),
-                                    path: DAMAGE_TYPES[attack_type_id as usize].to_owned(),
-                                })
+                                Some(ResourceLocation::new(format!("minecraft:{}", DAMAGE_TYPES[attack_type_id as usize])))
                             } else {
                                 None
                             }
                         } else {
                             bot.with_registry_holder(|holder| {
                                 holder
-                                    .map
+                                    .extra
                                     .get(&ResourceLocation::new("minecraft:damage_type"))
                                     .unwrap()
+                                    .map
                                     .iter()
                                     .enumerate()
                                     .filter(|(index, (_identifier, _nbt_comp))| *index == attack_type_id as usize)
@@ -281,8 +279,8 @@ impl Module for SoundnessModule {
                             })
                         };
                         let attack_type = if let Some(attack_type_identifier) = maybe_attack_type_identifier {
-                            if attack_type_identifier.namespace == "minecraft" {
-                                attack_type_identifier.path.to_string()
+                            if attack_type_identifier.namespace() == "minecraft" {
+                                attack_type_identifier.path().to_string()
                             } else {
                                 attack_type_identifier.to_string()
                             }

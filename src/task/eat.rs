@@ -6,12 +6,12 @@ use azalea::entity::LookDirection;
 use azalea::entity::metadata::{AbstractLivingUsingItem, Health};
 use azalea::inventory::components::Food;
 use azalea::inventory::{Inventory, ItemStackData, SetSelectedHotbarSlotEvent};
-use azalea::packet::game::SendPacketEvent;
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::protocol::packets::game::s_interact::InteractionHand;
 use azalea::protocol::packets::game::s_player_action::Action;
 use azalea::protocol::packets::game::{ServerboundGamePacket, ServerboundPlayerAction, ServerboundSetCarriedItem, ServerboundUseItem};
 use azalea::registry::Item;
-use azalea::{BlockPos, Client, Event, Hunger};
+use azalea::{BlockPos, Client, Event, local_player::Hunger};
 use std::fmt::{Display, Formatter};
 use std::time::{Duration, Instant};
 
@@ -116,7 +116,7 @@ impl EatTask {
         let inv_menu = inv.inventory_menu;
         for (hotbar_slot, slot) in inv_menu.hotbar_slots_range().enumerate() {
             if let Some(item_stack_data) = inv_menu.slot(slot).and_then(|stack| stack.as_present()) {
-                if item_stack_data.components.get::<Food>().is_some() || FOOD_ITEMS.contains(&item_stack_data.kind) {
+                if item_stack_data.get_component::<Food>().is_some() || FOOD_ITEMS.contains(&item_stack_data.kind) {
                     eat_item = Some((hotbar_slot as u8, item_stack_data.to_owned()));
                     break;
                 }
@@ -133,19 +133,19 @@ impl EatTask {
             let mut ecs = bot.ecs.lock();
             let entity = bot.entity;
 
-            ecs.send_event(SetSelectedHotbarSlotEvent { entity, slot: eat_hotbar_slot });
-            ecs.send_event(SendPacketEvent {
+            ecs.trigger(SetSelectedHotbarSlotEvent { entity, slot: eat_hotbar_slot });
+            ecs.trigger(SendGamePacketEvent {
                 sent_by: entity,
                 packet: ServerboundGamePacket::SetCarriedItem(ServerboundSetCarriedItem { slot: eat_hotbar_slot as u16 }),
             });
 
-            ecs.send_event(SendPacketEvent {
+            ecs.trigger(SendGamePacketEvent {
                 sent_by: entity,
                 packet: ServerboundGamePacket::UseItem(ServerboundUseItem {
                     hand: InteractionHand::MainHand,
-                    sequence: 0,
-                    yaw: look_direction.y_rot,
-                    pitch: look_direction.x_rot,
+                    seq: 0,
+                    y_rot: look_direction.y_rot(),
+                    x_rot: look_direction.x_rot(),
                 }),
             });
 
@@ -162,12 +162,12 @@ impl EatTask {
     }
 
     pub fn stop_interacting(bot: &Client) {
-        bot.ecs.lock().send_event(SendPacketEvent {
+        bot.ecs.lock().trigger(SendGamePacketEvent {
             sent_by: bot.entity,
             packet: ServerboundGamePacket::PlayerAction(ServerboundPlayerAction {
                 action: Action::ReleaseUseItem,
                 direction: Direction::Down,
-                sequence: 0,
+                seq: 0,
                 pos: BlockPos::new(0, 0, 0),
             }),
         });

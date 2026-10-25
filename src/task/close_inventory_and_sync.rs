@@ -1,8 +1,9 @@
 use crate::BotState;
 use crate::task::{Task, TaskOutcome};
 use azalea::inventory::operations::ClickType;
-use azalea::inventory::{ClientSideCloseContainerEvent, Inventory, ItemStack};
-use azalea::packet::game::SendPacketEvent;
+use azalea::inventory::{ClientsideCloseContainerEvent, Inventory};
+use azalea::packet::game::SendGamePacketEvent;
+use azalea::protocol::packets::game::s_container_click::HashedStack;
 use azalea::protocol::packets::game::{ClientboundGamePacket, ServerboundContainerClick, ServerboundContainerClose, ServerboundGamePacket};
 use azalea::{Client, Event};
 use std::fmt::{Display, Formatter};
@@ -38,12 +39,12 @@ impl Task for CloseInventoryAndSyncTask {
             entity: bot.entity,
             id: inv.id,
         });*/
-        ecs.send_event(SendPacketEvent {
+        ecs.trigger(SendGamePacketEvent {
             sent_by: bot.entity,
             packet: ServerboundGamePacket::ContainerClose(ServerboundContainerClose { container_id: inv.id }),
         });
-        ecs.send_event(ClientSideCloseContainerEvent { entity: bot.entity });
-        ecs.send_event(SendPacketEvent {
+        ecs.trigger(ClientsideCloseContainerEvent { entity: bot.entity });
+        ecs.trigger(SendGamePacketEvent {
             sent_by: bot.entity,
             packet: ServerboundGamePacket::ContainerClick(ServerboundContainerClick {
                 container_id: 0,
@@ -51,12 +52,12 @@ impl Task for CloseInventoryAndSyncTask {
                 slot_num: 0,
                 button_num: 3,
                 state_id: i32::MAX as u32,
-                carried_item: ItemStack::Empty,
+                carried_item: HashedStack(None),
                 changed_slots: Default::default(),
             }),
         });
         // Maybe fix grim button press issues
-        ecs.send_event(SendPacketEvent {
+        ecs.trigger(SendGamePacketEvent {
             sent_by: bot.entity,
             packet: ServerboundGamePacket::ContainerClose(ServerboundContainerClose { container_id: 0 }),
         });

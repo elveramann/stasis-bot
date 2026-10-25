@@ -40,8 +40,9 @@ use azalea::entity::Position;
 use azalea::swarm::DefaultSwarmPlugins;
 use azalea::task_pool::{TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
 use azalea::{
-    DefaultBotPlugins, DefaultPlugins, JoinOpts,
+    DefaultPlugins, JoinOpts,
     auth::AuthResult,
+    bot::DefaultBotPlugins,
     prelude::*,
     swarm::{Swarm, SwarmEvent},
 };
@@ -487,7 +488,7 @@ async fn async_main() -> Result<()> {
                 email: OPTS.auth_file_key.to_owned(),
             },
             // we don't do chat signing by default unless the user asks for it
-            certs: None,
+            certs: Arc::new(Mutex::new(None)),
         }
     };
 
@@ -601,7 +602,8 @@ async fn async_main() -> Result<()> {
             "OpenAuthMod support is active. The target server can authenticate your account against any server of its choosing! Make sure to only use this on servers you trust!"
         );
     }
-    builder.start(OPTS.server_address.as_str()).await.context("Running swarm")?
+    builder.start(OPTS.server_address.as_str()).await;
+    Ok(())
 }
 
 async fn auth() -> Result<AuthResult> {
@@ -937,10 +939,10 @@ async fn handle(bot: Client, event: Event, bot_state: BotState) -> Result<()> {
                     } else {
                         if line.starts_with("/") {
                             info!("Sending command: {line}");
-                            bot.send_command_packet(&format!("{}", &line[1..]));
+                            bot.write_command_packet(&format!("{}", &line[1..]));
                         } else {
                             info!("Sending chat message: {line}");
-                            bot.send_chat_packet(&line);
+                            bot.write_chat_packet(&line);
                         }
                     }
                 }
@@ -966,7 +968,7 @@ impl Default for SwarmState {
 }
 
 async fn swarm_rejoin(swarm: Swarm, state: SwarmState, account: Account, join_opts: JoinOpts) {
-    let mut reconnect_after_secs = 5;
+    let reconnect_after_secs = 5;
     loop {
         let last_refreshed = state.last_account_refresh.lock().elapsed();
         if last_refreshed > Duration::from_secs(/*3h*/ 60 * 60 * 3)
@@ -990,20 +992,16 @@ async fn swarm_rejoin(swarm: Swarm, state: SwarmState, account: Account, join_op
         info!("Reconnecting after {} seconds...", reconnect_after_secs);
 
         tokio::time::sleep(Duration::from_secs(reconnect_after_secs)).await;
-        reconnect_after_secs = (reconnect_after_secs * 2).min(60 * 15); // 2x or max 15 minutes
-
         info!("Joining again...");
-        match swarm.add_with_opts(&account, state.clone(), &join_opts).await {
-            Ok(_) => return,
-            Err(join_err) => error!("Failed to rejoin: {join_err}"), // Keep rejoining
-        }
+        swarm.add_with_opts(&account, state.clone(), &join_opts).await;
+        return;
     }
 }
 
 async fn swarm_handle(swarm: Swarm, event: SwarmEvent, state: SwarmState) -> anyhow::Result<()> {
     match event {
         SwarmEvent::Disconnect(account, join_opts) => {
-            tokio::spawn(swarm_rejoin(swarm.clone(), state.clone(), (*account).clone(), join_opts.clone()));
+            tokio::spawn(swarm_rejoin(swarm.clone(), state.clone(), (*account).clone(), *join_opts));
         }
         _ => {}
     }

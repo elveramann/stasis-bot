@@ -1,10 +1,10 @@
 use crate::task::{Task, TaskOutcome};
 use crate::{BotState, util};
 use anyhow::anyhow;
-use azalea::container::ContainerClientExt;
 use azalea::entity::LookDirection;
+use azalea::inventory::Inventory;
 use azalea::movement::LastSentLookDirection;
-use azalea::packet::game::SendPacketEvent;
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::protocol::packets::game::s_interact::InteractionHand;
 use azalea::protocol::packets::game::{ClientboundGamePacket, ServerboundGamePacket, ServerboundSwing, ServerboundUseItemOn};
 use azalea::{BlockPos, Client, Event};
@@ -80,19 +80,19 @@ impl Task for OpenContainerBlockTask {
         if let Event::Tick = event {
             /*let eye_pos = util::own_eye_pos(&bot);
             let pos_at_block = util::closest_aabb_pos_towards(eye_pos, util::aabb_from_blockpos(self.block_pos), 0.2);
-            let look_at_block = azalea::direction_looking_at(&eye_pos, &pos_at_block);
+            let look_at_block = azalea::bot::direction_looking_at(eye_pos, pos_at_block);
             *bot.ecs.lock().get_mut(bot.entity).ok_or(anyhow!("No lookdir"))? = look_at_block;*/
             let eye_pos = match util::own_eye_pos(&bot) {
                 Some(pos) => pos,
                 None => return Ok(TaskOutcome::Ongoing),
             };
 
-            if self.got_open_packet_at.is_some() && bot.get_open_container().is_some() {
+            if self.got_open_packet_at.is_some() && bot.get_component::<Inventory>().is_some_and(|inventory| inventory.container_menu.is_some()) {
                 self.got_container_menu = true;
             }
 
             if self.started_at.elapsed() >= Duration::from_millis(100) && !self.did_interact {
-                if let Some(state) = bot.world().read().get_block_state(&self.block_pos) {
+                if let Some(state) = bot.world().read().get_block_state(self.block_pos) {
                     if state.is_air() {
                         return Ok(TaskOutcome::Failed {
                             reason: "Target block is air!".to_owned(),
@@ -110,16 +110,16 @@ impl Task for OpenContainerBlockTask {
                 };
                 debug!("BlockHit: {block_hit:?}");
                 self.did_interact = true;
-                bot.ecs.lock().send_event(SendPacketEvent {
+                bot.ecs.lock().trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::UseItemOn(ServerboundUseItemOn {
                         block_hit,
                         hand: InteractionHand::MainHand,
-                        sequence: 0,
+                        seq: 0,
                     }),
                 });
                 // Aren't we nice?
-                bot.ecs.lock().send_event(SendPacketEvent {
+                bot.ecs.lock().trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::Swing(ServerboundSwing {
                         hand: InteractionHand::MainHand,

@@ -1,7 +1,7 @@
 use anyhow::{Context, anyhow, bail};
-use azalea::ResourceLocation;
+use azalea::Identifier;
+use azalea::block::properties::{NoteBlockNote, Sound};
 use azalea::blocks::BlockState;
-use azalea::blocks::properties::{NoteBlockNote, Sound};
 use azalea::inventory::components::NoteBlockSound;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
@@ -89,14 +89,11 @@ impl NbsInstrument {
         }
     }
 
-    pub fn instrument_id(&self) -> ResourceLocation {
-        ResourceLocation {
-            namespace: String::from("minecraft"),
-            path: String::from(self.name()),
-        }
+    pub fn instrument_id(&self) -> Identifier {
+        Identifier::new(format!("minecraft:{}", self.name()))
     }
 
-    pub fn sound_id(&self) -> Option<ResourceLocation> {
+    pub fn sound_id(&self) -> Option<Identifier> {
         // These are also defined inside an azalea registry (SoundEvent),
         // but I'm too lazy to find out how to get the ID from them rn.
         if NbsInstrument::CustomHead == *self {
@@ -104,10 +101,7 @@ impl NbsInstrument {
         }
 
         let name = self.name();
-        Some(ResourceLocation {
-            namespace: String::from("minecraft"),
-            path: format!("block.note_block.{name}"),
-        })
+        Some(Identifier::new(format!("minecraft:block.note_block.{name}")))
     }
 
     pub fn from_name(name: impl AsRef<str>) -> Option<Self> {
@@ -115,20 +109,20 @@ impl NbsInstrument {
         INSTRUMENTS.iter().find(|instr| instr.name() == name).map(|instr| *instr)
     }
 
-    pub fn from_instrument_id(id: &ResourceLocation) -> Option<Self> {
-        if id.namespace != "minecraft" {
+    pub fn from_instrument_id(id: &Identifier) -> Option<Self> {
+        if id.namespace() != "minecraft" {
             return None;
         }
-        INSTRUMENTS.iter().find(|instr| instr.name() == id.path).map(|instr| *instr)
+        INSTRUMENTS.iter().find(|instr| instr.name() == id.path()).map(|instr| *instr)
     }
 
-    pub fn from_sound_id(id: &ResourceLocation) -> Option<Self> {
-        if id.namespace != "minecraft" || id.path.starts_with("block.note_block.") {
+    pub fn from_sound_id(id: &Identifier) -> Option<Self> {
+        if id.namespace() != "minecraft" || id.path().starts_with("block.note_block.") {
             return None;
         }
         INSTRUMENTS
             .iter()
-            .find(|instr| instr.sound_id().map(|s| s.path == id.path).unwrap_or(false))
+            .find(|instr| instr.sound_id().map(|sound| sound.path() == id.path()).unwrap_or(false))
             .map(|instr| *instr)
     }
 

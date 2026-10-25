@@ -3,14 +3,14 @@
 
 use azalea::protocol::packets::login::ServerboundLoginPacket;
 use azalea::{
-    app::{App, Plugin, PreUpdate, Update},
+    app::{App, Plugin, Update},
     auth::sessionserver::ClientSessionServerError,
     buf::AzaleaRead,
     ecs::prelude::*,
-    packet::login::IgnoreQueryIds,
-    packet::login::{self, LoginPacketEvent, SendLoginPacketEvent},
+    login,
+    packet::login::{ReceiveCustomQueryEvent, SendLoginPacketEvent},
     prelude::*,
-    protocol::packets::login::{ClientboundLoginPacket, ServerboundCustomQueryAnswer},
+    protocol::packets::login::ServerboundCustomQueryAnswer,
 };
 use std::io::Cursor;
 use tokio::sync::{mpsc, oneshot};
@@ -47,7 +47,7 @@ async fn handle_auth_requests_loop(mut rx: mpsc::UnboundedReceiver<AuthRequest>)
         };
 
         let mut attempts = 0;
-        let result = loop {
+        let result: Result<(), ClientSessionServerError> = loop {
             if let Err(e) = {
                 let access_token = access_token.lock().clone();
                 azalea::auth::sessionserver::join_with_server_id_hash(&client, &access_token, &uuid, &server_id_hash).await
@@ -77,24 +77,15 @@ async fn handle_auth_requests_loop(mut rx: mpsc::UnboundedReceiver<AuthRequest>)
 
 impl Plugin for OpenAuthModPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreUpdate, handle_openauthmod.before(login::process_packet_events));
-        app.add_systems(Update, handle_join_task);
+        app.add_systems(Update, (handle_openauthmod.before(login::reply_to_custom_queries), handle_join_task));
 
         app.insert_resource(self.clone());
     }
 }
 
-fn handle_openauthmod(
-    mut commands: Commands,
-    mut events: EventReader<LoginPacketEvent>,
-    mut query: Query<(&Account, &mut IgnoreQueryIds)>,
-
-    plugin: Res<OpenAuthModPlugin>,
-) {
+fn handle_openauthmod(mut commands: Commands, mut events: MessageMutator<ReceiveCustomQueryEvent>, query: Query<&Account>, plugin: Res<OpenAuthModPlugin>) {
     for event in events.read() {
-        let ClientboundLoginPacket::CustomQuery(p) = &*event.packet else {
-            continue;
-        };
+        let p = &event.packet;
         let mut data = Cursor::new(&*p.data);
 
         match p.identifier.to_string().as_str() {
@@ -104,9 +95,8 @@ fn handle_openauthmod(
                     continue;
                 };
 
-                let (account, mut ignore_query_ids) = query.get_mut(event.entity).unwrap();
-
-                ignore_query_ids.insert(p.transaction_id);
+                let account = query.get(event.entity).unwrap();
+                event.disabled = true;
 
                 if account.access_token.is_none() {
                     error!("Server is online-mode, but our account is offline-mode");
@@ -143,7 +133,7 @@ struct JoinServerTask {
     transaction_id: u32,
 }
 
-fn handle_join_task(mut commands: Commands, mut join_server_tasks: Query<(Entity, &mut JoinServerTask)>, mut send_packets: EventWriter<SendLoginPacketEvent>) {
+fn handle_join_task(mut commands: Commands, mut join_server_tasks: Query<(Entity, &mut JoinServerTask)>) {
     for (entity, mut task) in &mut join_server_tasks {
         if let Ok(result) = task.rx.try_recv() {
             // Task is complete, so remove task component from entity
@@ -153,13 +143,13 @@ fn handle_join_task(mut commands: Commands, mut join_server_tasks: Query<(Entity
                 error!("Sessionserver error: {e:?}");
             }
 
-            send_packets.send(SendLoginPacketEvent {
-                entity: task.entity,
-                packet: ServerboundLoginPacket::CustomQueryAnswer(ServerboundCustomQueryAnswer {
+            commands.trigger(SendLoginPacketEvent::new(
+                task.entity,
+                ServerboundLoginPacket::CustomQueryAnswer(ServerboundCustomQueryAnswer {
                     transaction_id: task.transaction_id,
                     data: Some(vec![if result.is_ok() { 1 } else { 0 }].into()),
                 }),
-            });
+            ));
         }
     }
 }

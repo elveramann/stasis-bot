@@ -11,6 +11,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Instant;
 
+fn strip_chat_auto_punctuation(content: &str) -> &str {
+    content.strip_suffix('.').unwrap_or(content)
+}
+
 #[derive(Copy, Clone, PartialOrd, PartialEq, Debug)]
 pub enum InGameMessageKind {
     Direct,
@@ -131,7 +135,7 @@ impl ChatModule {
         } else {
             &command
         }; // Truncate
-        bot.send_command_packet(command);
+        bot.write_command_packet(command);
         debug!("Sent command: {command}");
     }
 
@@ -251,8 +255,9 @@ impl Module for ChatModule {
                 if let Some((public_chat, sender, content)) = req {
                     *self.last_dm_from.lock() = Some(sender.to_owned());
 
+                    let content = strip_chat_auto_punctuation(&content);
                     let (command, args) = if content.contains(' ') {
-                        let mut all_args: Vec<_> = content.to_owned().split(' ').map(|s| s.to_owned()).collect();
+                        let mut all_args: Vec<_> = content.split(' ').map(|s| s.to_owned()).collect();
                         let command = all_args.remove(0);
                         (command, all_args)
                     } else {
@@ -294,5 +299,18 @@ impl Module for ChatModule {
             _ => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_chat_auto_punctuation;
+
+    #[test]
+    fn strips_only_the_trailing_server_period() {
+        assert_eq!(strip_chat_auto_punctuation("!Tp."), "!Tp");
+        assert_eq!(strip_chat_auto_punctuation("!Tp Bot."), "!Tp Bot");
+        assert_eq!(strip_chat_auto_punctuation("!say hello.world."), "!say hello.world");
+        assert_eq!(strip_chat_auto_punctuation("!Tp"), "!Tp");
     }
 }

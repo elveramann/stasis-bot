@@ -1,6 +1,6 @@
 use crate::BotState;
 use crate::task::{Task, TaskOutcome};
-use azalea::blocks::properties::Powered;
+use azalea::block::properties::Powered;
 use azalea::{BlockPos, Client, Event};
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
@@ -37,7 +37,7 @@ impl Task for WaitForBlockUnpowerTask {
 
     fn handle(&mut self, bot: Client, _bot_state: &BotState, event: &Event) -> anyhow::Result<TaskOutcome> {
         if let Event::Tick = event {
-            if let Some(state) = bot.world().read().get_block_state(&self.block_pos)
+            if let Some(state) = bot.world().read().get_block_state(self.block_pos)
                 && !state.property::<Powered>().unwrap_or(true)
             {
                 return Ok(TaskOutcome::Succeeded);

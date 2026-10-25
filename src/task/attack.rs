@@ -6,7 +6,6 @@ use azalea::ecs::entity::Entity;
 use azalea::entity::{Dead, LookDirection, Physics};
 use azalea::movement::LastSentLookDirection;
 use azalea::prelude::*;
-use azalea::world::MinecraftEntityId;
 use azalea::{Client, Event};
 use std::fmt::{Display, Formatter};
 use std::time::Instant;
@@ -36,9 +35,9 @@ impl AttackTask {
 
     pub fn look_at_closest_point(&self, bot: &mut Client) -> Result<()> {
         if let Some(own_eye_pos) = util::own_eye_pos(bot) {
-            let good_look_dir = azalea::direction_looking_at(
-                &own_eye_pos,
-                &util::closest_aabb_pos_towards(own_eye_pos, entity_util::entity_aabb(bot, self.target), 0.05),
+            let good_look_dir = azalea::bot::direction_looking_at(
+                own_eye_pos,
+                util::closest_aabb_pos_towards(own_eye_pos, entity_util::entity_aabb(bot, self.target), 0.05),
             );
             *bot.ecs.lock().get_mut(bot.entity).ok_or(anyhow!("No lookdir"))? = util::fix_look_direction(good_look_dir);
         }
@@ -105,9 +104,8 @@ impl Task for AttackTask {
                     entity_util::entity_aabb(&mut bot, self.target),
                 ) {
                     // Attack
-                    let target_id = bot.entity_component::<MinecraftEntityId>(self.target);
                     let mut ecs = bot.ecs.lock();
-                    /*ecs.send_event(SendPacketEvent {
+                    /*ecs.send_event(SendGamePacketEvent {
                         sent_by: bot.entity,
                         packet: ServerboundGamePacket::Interact(ServerboundInteract {
                             entity_id: target_id,
@@ -118,9 +116,9 @@ impl Task for AttackTask {
                     ecs.send_event(SwingArmEvent { entity: bot.entity });*/
 
                     // May be later, but does not flag grim (PacketOrderB, post-attack)
-                    ecs.send_event(AttackEvent {
+                    ecs.write_message(AttackEvent {
                         entity: bot.entity,
-                        target: target_id,
+                        target: self.target,
                     });
                     ecs.entity_mut(bot.entity).insert(LastAttack { when: Instant::now() });
                     return Ok(TaskOutcome::Succeeded);

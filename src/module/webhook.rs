@@ -124,7 +124,7 @@ impl Module for WebhookModule {
 
     async fn handle(&self, bot: Client, event: &Event, _bot_state: &BotState) -> anyhow::Result<()> {
         match event {
-            Event::Init => *self.profile.lock() = Some(bot.profile),
+            Event::Init => *self.profile.lock() = Some(bot.profile()),
             _ => {}
         }
         Ok(())

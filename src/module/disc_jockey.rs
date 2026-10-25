@@ -7,7 +7,7 @@ use crate::task::tracked::{TrackedTask, TrackedTaskStatus};
 use anyhow::{Context, bail};
 use azalea::ecs::prelude::With;
 use azalea::entity::metadata::Player;
-use azalea::{Client, Event, GameProfileComponent};
+use azalea::{Client, Event, player::GameProfileComponent};
 use parking_lot::Mutex;
 use rand::Rng;
 use std::path::{Path, PathBuf};
@@ -452,7 +452,7 @@ pub async fn execute_dj_command<F: Fn(&str) + Send + Sync + 'static>(
     sender_is_admin: bool,
 ) -> anyhow::Result<()> {
     let can_see = bot
-        .entity_by::<With<Player>, (&GameProfileComponent,)>(|(profile,): &(&GameProfileComponent,)| profile.name == sender)
+        .any_entity_by::<&GameProfileComponent, With<Player>>(|profile: &GameProfileComponent| profile.name == sender)
         .is_some();
     if crate::OPTS.dj_admin_only && !sender_is_admin {
         feedback("You need to be specified as an admin to use this command!");

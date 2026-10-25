@@ -1,17 +1,17 @@
 use crate::util;
 use crate::util::rotation_vec;
 use anyhow::{Result, anyhow};
-use azalea::core::aabb::AABB;
+use azalea::core::aabb::Aabb;
 use azalea::core::game_type::GameMode;
 use azalea::ecs::entity::Entity;
 use azalea::ecs::prelude::With;
 use azalea::entity::metadata::CustomName;
-use azalea::entity::{EntityKind, LookDirection, Physics};
+use azalea::entity::{EntityKindComponent, LookDirection, Physics};
 use azalea::world::MinecraftEntityId;
-use azalea::{Client, GameProfileComponent, Vec3};
+use azalea::{Client, Vec3, player::GameProfileComponent};
 
 pub fn entity_by_id(bot: &mut Client, entity_id: i32) -> Option<Entity> {
-    bot.entity_by::<With<EntityKind>, (&MinecraftEntityId,)>(|(id,): &(&MinecraftEntityId,)| id.0 == entity_id)
+    bot.any_entity_by::<&MinecraftEntityId, With<EntityKindComponent>>(|id: &MinecraftEntityId| id.0 == entity_id)
 }
 
 pub fn describe_by_id(bot: &mut Client, entity_id: i32) -> Result<String> {
@@ -23,7 +23,7 @@ pub fn describe_by_id(bot: &mut Client, entity_id: i32) -> Result<String> {
     }
 }
 
-pub fn entity_aabb(bot: &mut Client, entity: Entity) -> AABB {
+pub fn entity_aabb(bot: &mut Client, entity: Entity) -> Aabb {
     bot.entity_component::<Physics>(entity).bounding_box
 }
 
@@ -39,7 +39,7 @@ pub fn own_entity_interaction_range(bot: &Client) -> f64 {
     3.0 + creative_mode_entity_range
 }
 
-pub fn can_interact_with_entity_box(own_eye_pos: Vec3, look_dir: LookDirection, entity_interaction_range: f64, entity_box: AABB) -> bool {
+pub fn can_interact_with_entity_box(own_eye_pos: Vec3, look_dir: LookDirection, entity_interaction_range: f64, entity_box: Aabb) -> bool {
     // Assuming MC 1.20.5+ (below is really messy + I'm too lazy rn)
     intersection(
         entity_box,
@@ -52,15 +52,15 @@ pub fn can_interact_with_entity_box(own_eye_pos: Vec3, look_dir: LookDirection, 
     .is_some()
 }
 
-pub fn could_interact_with_entity_box(own_eye_pos: Vec3, entity_interaction_range: f64, entity_box: AABB, dist_to_edges: f64) -> bool {
+pub fn could_interact_with_entity_box(own_eye_pos: Vec3, entity_interaction_range: f64, entity_box: Aabb, dist_to_edges: f64) -> bool {
     // Assuming MC 1.20.5+ (below is really messy + I'm too lazy rn)
-    let best_look_dir = azalea::direction_looking_at(&own_eye_pos, &util::closest_aabb_pos_towards(own_eye_pos, entity_box, dist_to_edges));
+    let best_look_dir = azalea::bot::direction_looking_at(own_eye_pos, util::closest_aabb_pos_towards(own_eye_pos, entity_box, dist_to_edges));
     can_interact_with_entity_box(own_eye_pos, best_look_dir, entity_interaction_range, entity_box)
 }
 
 pub fn describe(bot: &mut Client, entity: Entity) -> Result<String> {
     let entity_id = bot.get_entity_component::<MinecraftEntityId>(entity).ok_or(anyhow!("No McId"))?.0;
-    let kind = bot.get_entity_component::<EntityKind>(entity).ok_or(anyhow!("No EntityKind"))?;
+    let kind = bot.get_entity_component::<EntityKindComponent>(entity).ok_or(anyhow!("No EntityKind"))?;
     let kind = kind.0.to_string().split(":").collect::<Vec<_>>()[1].to_owned();
 
     if let Some(profile) = bot.get_entity_component::<GameProfileComponent>(entity) {
@@ -85,7 +85,7 @@ fn vec3_index(vec: Vec3, index: usize) -> f64 {
 }
 
 /// https://alelievr.github.io/Modern-Rendering-Introduction/AABBIntersection/
-pub fn intersection(aabb: AABB, ray_start: Vec3, ray_end: Vec3) -> Option<(Vec3, f64 /*Dist*/)> {
+pub fn intersection(aabb: Aabb, ray_start: Vec3, ray_end: Vec3) -> Option<(Vec3, f64 /*Dist*/)> {
     let ray_dir = ray_end - ray_start;
     let mut tmin: f64 = 0.0; // Start with the minimum distance (can be -FLT_MAX for entire ray)
     let mut tmax: f64 = f64::MAX; // Maximum allowable distance for the ray (segment length or ∞)
@@ -131,7 +131,7 @@ pub fn intersection(aabb: AABB, ray_start: Vec3, ray_end: Vec3) -> Option<(Vec3,
 }
 
 /*/// https://gamedev.stackexchange.com/a/146362 -> https://tavianator.com/2011/ray_box.html -> https://tavianator.com/2015/ray_box_nan.html#comment-52153
-fn intersects(b: AABB, ray_start: Vec3, ray_end: Vec3) -> bool {
+fn intersects(b: Aabb, ray_start: Vec3, ray_end: Vec3) -> bool {
     let ray_dir_inv = Vec3::new(
         1.0 / (ray_end.x - ray_start.x),
         1.0 / (ray_end.y - ray_start.y),

@@ -1,6 +1,6 @@
 use crate::module::Module;
 use crate::{BotState, OPTS};
-use azalea::packet::game::SendPacketEvent;
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::protocol::packets::game::s_interact::InteractionHand;
 use azalea::protocol::packets::game::{ServerboundGamePacket, ServerboundSwing};
 use azalea::{Client, Event};
@@ -43,7 +43,7 @@ impl Module for PeriodicSwingModule {
                     ticks += 1;
                     if ticks >= self.tick_period {
                         ticks = 0;
-                        bot.ecs.lock().send_event(SendPacketEvent {
+                        bot.ecs.lock().trigger(SendGamePacketEvent {
                             sent_by: bot.entity,
                             packet: ServerboundGamePacket::Swing(ServerboundSwing {
                                 hand: InteractionHand::MainHand,

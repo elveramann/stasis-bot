@@ -5,21 +5,21 @@ use azalea::entity::Position;
 use azalea::pathfinder::PathfinderClientExt;
 use azalea::pathfinder::astar::PathfinderTimeout;
 use azalea::pathfinder::goals::Goal;
-use azalea::pathfinder::{GotoEvent, Pathfinder, StopPathfindingEvent, moves};
+use azalea::pathfinder::{GotoEvent, Pathfinder, PathfinderOpts, StopPathfindingEvent, moves};
 use azalea::{BlockPos, Client, Event, Vec3};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BoxedPathfindGoal {
-    pub goal: Box<dyn Goal + Sync + Send>,
+    pub goal: Arc<dyn Goal + Sync + Send>,
 }
 
 impl BoxedPathfindGoal {
     pub fn new<G: Goal + Sync + Send + 'static>(goal: G) -> Self {
-        BoxedPathfindGoal { goal: Box::new(goal) }
+        BoxedPathfindGoal { goal: Arc::new(goal) }
     }
 }
 
@@ -99,7 +99,7 @@ impl Task for PathfindTask {
             bail!("Already started!");
         }*/
         if is_pathfinding(&bot) {
-            bot.ecs.lock().send_event(StopPathfindingEvent {
+            bot.ecs.lock().write_message(StopPathfindingEvent {
                 entity: bot.entity,
                 force: true,
             });
@@ -111,15 +111,12 @@ impl Task for PathfindTask {
             return Ok(());
         }
 
-        bot.ecs.lock().send_event(GotoEvent {
-            entity: bot.entity,
-            goal: self.goal.clone(),
-            //successors_fn: moves::basic::basic_move,
-            successors_fn: moves::default_move,
-            allow_mining: self.allow_mining,
-            min_timeout: PathfinderTimeout::Time(Duration::from_secs(1)),
-            max_timeout: PathfinderTimeout::Time(Duration::from_secs(5)),
-        });
+        let opts = PathfinderOpts::new()
+            .successors_fn(moves::default_move)
+            .allow_mining(self.allow_mining)
+            .min_timeout(PathfinderTimeout::Time(Duration::from_secs(1)))
+            .max_timeout(PathfinderTimeout::Time(Duration::from_secs(5)));
+        bot.ecs.lock().write_message(GotoEvent::new(bot.entity, self.goal.as_ref().clone(), opts));
         self.last_is_calculating = is_calculating(&bot);
         info!(
             "Pathfinding to \"{}\"{}...",
@@ -171,7 +168,7 @@ impl Task for PathfindTask {
                 let current_pos = Vec3::from(&bot.component::<Position>());
                 let mut did_move = false;
                 if let Some((last_pos_updated, last_pos)) = self.last_position {
-                    did_move = current_pos.distance_squared_to(&last_pos) >= 0.2 * 0.2;
+                    did_move = current_pos.distance_squared_to(last_pos) >= 0.2 * 0.2;
                     if !did_move && last_pos_updated.elapsed() > Duration::from_secs(30) {
                         warn!("Didn't meaningfully move at all over 30s. Pathfinding is likely stuck! Nothing left other than to kill this process :(");
                         std::process::exit(EXITCODE_PATHFINDER_DEADLOCKED);

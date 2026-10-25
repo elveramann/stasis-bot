@@ -10,7 +10,7 @@ use anyhow::{Context, anyhow, bail, ensure};
 use azalea::core::direction::Direction;
 use azalea::core::game_type::GameMode;
 use azalea::entity::Position;
-use azalea::packet::game::SendPacketEvent;
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::protocol::packets::game::s_interact::InteractionHand;
 use azalea::protocol::packets::game::s_player_action::Action;
@@ -27,7 +27,7 @@ pub mod tune {
     use crate::util;
     use anyhow::{Context, anyhow, bail};
     use azalea::inventory::Inventory;
-    use azalea::packet::game::SendPacketEvent;
+    use azalea::packet::game::SendGamePacketEvent;
     use azalea::protocol::packets::game::s_interact::InteractionHand;
     use azalea::protocol::packets::game::s_use_item_on::BlockHit;
     use azalea::protocol::packets::game::{
@@ -92,7 +92,7 @@ pub mod tune {
             if util::squared_magnitude(util::aabb_from_blockpos(&pos), own_eye_pos) > 5.5 * 5.5 {
                 return false; // Too far (default survival interact range for MC 1.20.5+)
             }
-            if pos.center().distance_squared_to(&own_eye_pos) > 6.0 * 6.0 {
+            if pos.center().distance_squared_to(own_eye_pos) > 6.0 * 6.0 {
                 return false; // Too far (until MC 1.20.4)
             }
             true
@@ -100,7 +100,7 @@ pub mod tune {
 
         pub fn is_occluded(ecs: &Instance, pos: &BlockPos, instrument: &NbsInstrument) -> bool {
             if instrument.is_instrument_block_below()
-                && let Some(state) = ecs.get_block_state(&pos.up(1))
+                && let Some(state) = ecs.get_block_state(pos.up(1))
             {
                 !state.is_air()
             } else {
@@ -112,7 +112,7 @@ pub mod tune {
             match self.ping {
                 PingState::NotStarted => {
                     let ping_id = i64::MIN + rand::rng().random_range(0..i64::MAX / 4);
-                    bot.ecs.lock().send_event(SendPacketEvent {
+                    bot.ecs.lock().trigger(SendGamePacketEvent {
                         sent_by: bot.entity,
                         packet: ServerboundGamePacket::PingRequest(ServerboundPingRequest { time: ping_id as u64 }),
                     });
@@ -143,7 +143,7 @@ pub mod tune {
                             continue; // Too far
                         }
 
-                        let note = world.get_block_state(&pos).map_or(None, |state| NbsNote::try_from(state).ok());
+                        let note = world.get_block_state(pos).map_or(None, |state| NbsNote::try_from(state).ok());
                         if let Some(note) = note {
                             notes.entry(note.instrument).or_default().try_insert(pos, note.pitch).ok();
                         }
@@ -252,29 +252,29 @@ pub mod tune {
                 Event::Tick => {
                     if let Some(block_hit) = self.waiting_block_hit.take() {
                         let scaffolding_hotbar_slot = Self::find_scaffolding_in_hotbar(bot);
-                        let current_hotbar_slot = bot.map_get_component(|maybe_inv| maybe_inv.map(|inv: &Inventory| inv.selected_hotbar_slot));
+                        let current_hotbar_slot = bot.get_component::<Inventory>().map(|inv| inv.selected_hotbar_slot);
 
                         let mut ecs = bot.ecs.lock();
                         if let Some(current_hotbar_slot) = current_hotbar_slot
                             && let Some(scaffolding_hotbar_slot) = scaffolding_hotbar_slot
                             && current_hotbar_slot != scaffolding_hotbar_slot
                         {
-                            ecs.send_event(SendPacketEvent {
+                            ecs.trigger(SendGamePacketEvent {
                                 sent_by: bot.entity,
                                 packet: ServerboundGamePacket::SetCarriedItem(ServerboundSetCarriedItem {
                                     slot: scaffolding_hotbar_slot as u16,
                                 }),
                             });
                         }
-                        ecs.send_event(SendPacketEvent {
+                        ecs.trigger(SendGamePacketEvent {
                             sent_by: bot.entity,
                             packet: ServerboundGamePacket::UseItemOn(ServerboundUseItemOn {
                                 block_hit,
                                 hand: InteractionHand::MainHand,
-                                sequence: 0,
+                                seq: 0,
                             }),
                         });
-                        ecs.send_event(SendPacketEvent {
+                        ecs.trigger(SendGamePacketEvent {
                             sent_by: bot.entity,
                             packet: ServerboundGamePacket::Swing(ServerboundSwing {
                                 hand: InteractionHand::MainHand,
@@ -284,7 +284,7 @@ pub mod tune {
                             && let Some(scaffolding_hotbar_slot) = scaffolding_hotbar_slot
                             && current_hotbar_slot != scaffolding_hotbar_slot
                         {
-                            ecs.send_event(SendPacketEvent {
+                            ecs.trigger(SendGamePacketEvent {
                                 sent_by: bot.entity,
                                 packet: ServerboundGamePacket::SetCarriedItem(ServerboundSetCarriedItem {
                                     slot: current_hotbar_slot as u16,
@@ -323,7 +323,7 @@ pub mod tune {
                         {
                             pending_predictions += 1;
                             *pitch // Prediction
-                        } else if let Some(note) = world.get_block_state(&job.pos).map_or(None, |state| NbsNote::try_from(state).ok()) {
+                        } else if let Some(note) = world.get_block_state(job.pos).map_or(None, |state| NbsNote::try_from(state).ok()) {
                             if note.instrument != job.instrument {
                                 warn!(
                                     "Expected instrument {:?} at pos {} but found {:?} instead. Re-starting tune...",
@@ -703,12 +703,12 @@ impl DiscJockeyTask {
             if rate_limiter.can_send_packet() {
                 // Set proper direction to satisfy Grim 2's PositionBreakA check:
                 let direction = Direction::nearest(pos.center() - own_eye_pos).opposite();
-                ecs.send_event(SendPacketEvent {
+                ecs.trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::PlayerAction(ServerboundPlayerAction {
                         action: Action::StartDestroyBlock,
                         direction,
-                        sequence: 0,
+                        seq: 0,
                         pos: *pos,
                     }),
                 });
@@ -720,23 +720,23 @@ impl DiscJockeyTask {
         if let Some(last_pos) = last_pos {
             if rate_limiter.can_send_look_packet() {
                 *ecs.get_mut(bot.entity).ok_or(anyhow!("No lookdir"))? =
-                    util::fix_look_direction(azalea::direction_looking_at(&own_eye_pos, &last_pos.center()));
+                    util::fix_look_direction(azalea::bot::direction_looking_at(own_eye_pos, last_pos.center()));
                 rate_limiter.on_look_packet_sent();
             }
             if rate_limiter.can_send_cosmetic_packet() {
-                ecs.send_event(SendPacketEvent {
+                ecs.trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::PlayerAction(ServerboundPlayerAction {
                         action: Action::AbortDestroyBlock,
                         direction: Direction::Down,
-                        sequence: 0,
+                        seq: 0,
                         pos: last_pos,
                     }),
                 });
                 rate_limiter.on_packet_sent();
             }
             if rate_limiter.can_send_swing_packet() {
-                ecs.send_event(SendPacketEvent {
+                ecs.trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::Swing(ServerboundSwing {
                         hand: InteractionHand::MainHand,
@@ -791,7 +791,7 @@ impl Task for DiscJockeyTask {
             if let Some(ref pos) = crate::OPTS.dj_pos {
                 // Pathfind first, center later
                 let own_pos = bot.component::<Position>();
-                if own_pos.horizontal_distance_squared_to(&pos.center()) >= 3000.0 * 3000.0 {
+                if own_pos.horizontal_distance_squared_to(pos.center()) >= 3000.0 * 3000.0 {
                     return Ok(TaskOutcome::Failed {
                         reason: "DJ-Pos is very far away!".to_owned(),
                     });
@@ -981,7 +981,7 @@ impl Task for DiscJockeyTask {
 
             if let Some(pos) = bot.get_component::<Position>() {
                 let center_pos = Vec3::new(pos.x.floor() + 0.5, pos.y, pos.z.floor() + 0.5);
-                if pos.horizontal_distance_squared_to(&center_pos) >= 0.15 * 0.15 {
+                if pos.horizontal_distance_squared_to(center_pos) >= 0.15 * 0.15 {
                     info!("Bot is no longer centered. Positioning again...");
                     self.phase = SongPlaybackPhase::Initializing;
                     state.actual_status = ActualPlaybackStatus::Positioning; // Change early, since otherwise only changed next time task is handled

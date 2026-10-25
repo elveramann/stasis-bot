@@ -11,8 +11,8 @@ use crate::task::wait_for_block_unpower::WaitForBlockUnpowerTask;
 use crate::util::InteractableGoal;
 use crate::{BotState, OPTS};
 use anyhow::{Context, anyhow, bail};
-use azalea::blocks::Block;
-use azalea::blocks::properties::{FacingCubic, Open};
+use azalea::block::BlockTrait as Block;
+use azalea::block::properties::{FacingCubic, Open};
 use azalea::core::direction::Direction;
 use azalea::core::position::ChunkPos;
 use azalea::ecs::entity::Entity;
@@ -20,13 +20,13 @@ use azalea::ecs::prelude::With;
 use azalea::entity::metadata::{EnderPearl, Player};
 use azalea::entity::{EntityDataValue, EntityUuid, Position};
 use azalea::inventory::Inventory;
-use azalea::packet::game::SendPacketEvent;
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::pathfinder::goals;
 use azalea::protocol::packets::game::c_animate::AnimationAction;
 use azalea::protocol::packets::game::{ClientboundGamePacket, ServerboundContainerButtonClick, ServerboundGamePacket};
 use azalea::registry::{BlockEntityKind, EntityKind};
 use azalea::world::{Instance, MinecraftEntityId};
-use azalea::{BlockPos, Client, Event, FormattedText, GameProfileComponent, Vec3};
+use azalea::{BlockPos, Client, Event, FormattedText, Vec3, player::GameProfileComponent};
 use parking_lot::{Mutex, RwLockReadGuard};
 use serde::{Deserialize, Serialize};
 use simdnbt::owned::{Nbt, NbtCompound};
@@ -318,7 +318,7 @@ impl StasisModule {
         if let Some(last_idle_pos) = self.last_idle_pos.lock().as_ref()
             && own_block_pos
                 .as_ref()
-                .map(|pos| last_idle_pos.horizontal_distance_squared_to(pos) <= 3500 * 3500)
+                .map(|pos| last_idle_pos.horizontal_distance_squared_to(*pos) <= 3500 * 3500)
                 .unwrap_or(false)
         {
             Some(last_idle_pos.clone())
@@ -344,7 +344,7 @@ impl StasisModule {
         let mut previous_pos = target_block;
         let mut at_least_one_observer = false;
         'search_loop: loop {
-            if let Some(state) = world.get_block_state(&current_pos) {
+            if let Some(state) = world.get_block_state(current_pos) {
                 let block = Box::<dyn Block>::from(state);
                 let block_id = block.id();
                 //info!("Current block: {}", block_id);
@@ -380,7 +380,7 @@ impl StasisModule {
                         if maybe_observer_pos == previous_pos {
                             continue; // Don't return
                         }
-                        if let Some(state) = world.get_block_state(&maybe_observer_pos) {
+                        if let Some(state) = world.get_block_state(maybe_observer_pos) {
                             let block = Box::<dyn Block>::from(state);
                             let facing = state.property::<FacingCubic>();
                             if block.id().ends_with("observer")
@@ -468,7 +468,7 @@ impl StasisModule {
             let mut column_blocks = 0;
             for y_offset_abs in 0..32 {
                 let block_pos = base_pos.add(BlockPos::new(0, -y_offset_abs, 0));
-                if let Some(state) = world.get_block_state(&block_pos) {
+                if let Some(state) = world.get_block_state(block_pos) {
                     let block = Box::<dyn Block>::from(state);
                     let block_type = if block.id().ends_with("_trapdoor") && !block.id().ends_with("iron_trapdoor") {
                         BlockType::Trapdoor
@@ -477,7 +477,7 @@ impl StasisModule {
                     } else if block.id().ends_with("soul_sand") {
                         BlockType::SoulSand
                     } else if block.id().ends_with("water")
-                        && let Some(fluid_state) = world.get_fluid_state(&block_pos)
+                        && let Some(fluid_state) = world.get_fluid_state(block_pos)
                     {
                         if fluid_state.amount == 8 {
                             BlockType::WaterStill
@@ -512,7 +512,7 @@ impl StasisModule {
                                 // Find pickles
                                 for dir in [Direction::East, Direction::South, Direction::West, Direction::North] {
                                     let nearby_pos = block_pos.offset_with_direction(dir);
-                                    if let Some(state) = world.get_block_state(&nearby_pos) {
+                                    if let Some(state) = world.get_block_state(nearby_pos) {
                                         let block = Box::<dyn Block>::from(state);
                                         if block.id().ends_with("sea_pickle") {
                                             pickles_pos = Some(nearby_pos);
@@ -526,7 +526,7 @@ impl StasisModule {
                                     && let Some(expect_align_piston_at) = expect_align_piston_at
                                 {
                                     // Find piston that can move pearls to pickles
-                                    if let Some(state) = world.get_block_state(&expect_align_piston_at) {
+                                    if let Some(state) = world.get_block_state(expect_align_piston_at) {
                                         let block = Box::<dyn Block>::from(state);
                                         if block.id().ends_with("piston") && !block.id().ends_with("sticky_piston") {
                                             // Found a piston
@@ -546,7 +546,7 @@ impl StasisModule {
                                         // Find piston that could push near pickles (pull pearl)
                                         for dir in [Direction::East, Direction::South, Direction::West, Direction::North] {
                                             let nearby_pos = block_pos.offset_with_direction(dir);
-                                            if let Some(state) = world.get_block_state(&nearby_pos) {
+                                            if let Some(state) = world.get_block_state(nearby_pos) {
                                                 let block = Box::<dyn Block>::from(state);
                                                 if block.id().ends_with("piston") && !block.id().ends_with("sticky_piston") {
                                                     // Found a piston
@@ -934,12 +934,12 @@ impl StasisModule {
 
             let mut remove_occupant_indices = Vec::new();
             for (occupant_index, occupant) in chamber.occupants.iter().enumerate() {
-                if own_pos.horizontal_distance_squared_to(&chamber_pos.center()) > 56.0f64.powi(2) {
+                if own_pos.horizontal_distance_squared_to(chamber_pos.center()) > 56.0f64.powi(2) {
                     continue; // Too far to judge
                 }
 
                 if let Some(pearl_uuid) = occupant.pearl_uuid {
-                    let pearl_entity = bot.entity_by::<With<EnderPearl>, (&EntityUuid,)>(|(entity_uuid,): &(&EntityUuid,)| ***entity_uuid == pearl_uuid);
+                    let pearl_entity = bot.any_entity_by::<&EntityUuid, With<EnderPearl>>(|entity_uuid: &EntityUuid| **entity_uuid == pearl_uuid);
                     if pearl_entity.is_none() {
                         let mut missing_pearl_counter = self.missing_pearl_counter.lock();
                         *missing_pearl_counter.entry(pearl_uuid).or_default() += 1;
@@ -994,7 +994,7 @@ impl StasisModule {
                 if let Some(signs) = self.sign_cache.lock().get(&chunk_pos) {
                     'offsets: for y_offset in [0, -1, 1, -2, 2, -3, 3, -4, 4] {
                         let maybe_sign_pos = BlockPos::new(chamber_pos.x, chamber_pos.y + y_offset, chamber_pos.z);
-                        if let Some(state) = world.get_block_state(&maybe_sign_pos) {
+                        if let Some(state) = world.get_block_state(maybe_sign_pos) {
                             let block = Box::<dyn Block>::from(state);
                             if !block.id().ends_with("_sign") {
                                 continue; // Not a sign anymore
@@ -1105,8 +1105,8 @@ impl StasisModule {
                     warn!("Remove uncertain occupant preemptively (no player uuid, likely thrown while offline): {occupant:?}");
                 } else if pearl_not_found && let Some(pearl_uuid) = occupant.pearl_uuid
                     && bot.world().read().chunks.get(&ChunkPos::new(definition.rough_pos().x >> 4, definition.rough_pos().z >> 4)).is_some()
-                    && definition.rough_pos().center().horizontal_distance_squared_to(&Vec3::from(&bot.component::<Position>())) <= 58f64.powi(2) /*In range by ~6 blocks */
-                    && bot.entity_by::<With<EnderPearl>, (&EntityUuid,)>(|(uuid,): &(&EntityUuid,)| pearl_uuid == ***uuid).is_none()
+                    && definition.rough_pos().center().horizontal_distance_squared_to(Vec3::from(&bot.component::<Position>())) <= 58f64.powi(2) /*In range by ~6 blocks */
+                    && bot.any_entity_by::<&EntityUuid, With<EnderPearl>>(|uuid: &EntityUuid| pearl_uuid == **uuid).is_none()
                 {
                     warn!("Remove uncertain occupant preemptively (pearl not found by uuid, likely despawned while offline): {occupant:?}");
                     remove_occupant_indices.push(occupant_index);
@@ -1169,7 +1169,7 @@ impl StasisModule {
 
                 // Has closed security trapdoor: open it
                 if let StasisChamberDefinition::SecuredFlippableTrapdoor { security_trapdoor_pos, .. } = definition
-                    && let Some(state) = bot.world().read().get_block_state(&security_trapdoor_pos)
+                    && let Some(state) = bot.world().read().get_block_state(security_trapdoor_pos)
                     && !state.property::<Open>().unwrap_or(false)
                 {
                     group.add(AffectBlockTask::new(security_trapdoor_pos)); // Open security trapdoor
@@ -1184,9 +1184,8 @@ impl StasisModule {
                     for chamber in &self.config.lock().chambers {
                         if chamber.definition == definition {
                             for occupant in &chamber.occupants {
-                                let pearl_entity = bot.entity_by::<With<EnderPearl>, (&EntityUuid,)>(|(entity_uuid,): &(&EntityUuid,)| {
-                                    Some(***entity_uuid) == occupant.pearl_uuid
-                                });
+                                let pearl_entity =
+                                    bot.any_entity_by::<&EntityUuid, With<EnderPearl>>(|entity_uuid: &EntityUuid| Some(**entity_uuid) == occupant.pearl_uuid);
                                 if let Some(pearl_entity) = pearl_entity
                                     && let Some(pearl_pos) = bot.get_entity_component::<Position>(pearl_entity)
                                 {
@@ -1214,7 +1213,7 @@ impl StasisModule {
                 trigger_group.add(OnceFuncTask::new("Check if any pearl exists", move |mut bot, bot_state| {
                     let any_pearl = has_null_pearl
                         || bot
-                            .entity_by::<With<EnderPearl>, (&EntityUuid,)>(|(entity_uuid,): &(&EntityUuid,)| occupying_pearl_uuids_clone.contains(entity_uuid))
+                            .any_entity_by::<&EntityUuid, With<EnderPearl>>(|entity_uuid: &EntityUuid| occupying_pearl_uuids_clone.contains(&**entity_uuid))
                             .is_some();
                     let is_hanging = bot_state.server_tps.map(|server_tps| server_tps.is_server_likely_hanging()).unwrap_or(false);
                     if !any_pearl && !is_hanging {
@@ -1308,7 +1307,7 @@ impl StasisModule {
                         }
                         let mut ecs = bot.ecs.lock();
                         let sent_by = bot.entity;
-                        ecs.send_event(SendPacketEvent {
+                        ecs.trigger(SendGamePacketEvent {
                             sent_by,
                             packet: ServerboundGamePacket::ContainerButtonClick(ServerboundContainerButtonClick {
                                 container_id: inv.id,
@@ -1330,7 +1329,7 @@ impl StasisModule {
                 trigger_group.add(OnceFuncTask::new("Check if any pearl exists", move |mut bot, bot_state| {
                     let any_pearl = has_null_pearl
                         || bot
-                            .entity_by::<With<EnderPearl>, (&EntityUuid,)>(|(entity_uuid,): &(&EntityUuid,)| occupying_pearl_uuids_clone.contains(entity_uuid))
+                            .any_entity_by::<&EntityUuid, With<EnderPearl>>(|entity_uuid: &EntityUuid| occupying_pearl_uuids_clone.contains(&**entity_uuid))
                             .is_some();
                     let is_hanging = bot_state.server_tps.map(|server_tps| server_tps.is_server_likely_hanging()).unwrap_or(false);
                     if !any_pearl && !is_hanging {
@@ -1399,7 +1398,7 @@ impl StasisModule {
                 let definition_clone = definition.clone();
                 trigger_group.add(OnceFuncTask::new("Check if any pearl exists", move |mut bot, bot_state| {
                     let any_pearl = bot
-                        .entity_by::<With<EnderPearl>, (&EntityUuid,)>(|(entity_uuid,): &(&EntityUuid,)| occupying_pearl_uuids_clone.contains(entity_uuid))
+                        .any_entity_by::<&EntityUuid, With<EnderPearl>>(|entity_uuid: &EntityUuid| occupying_pearl_uuids_clone.contains(&**entity_uuid))
                         .is_some();
                     let is_hanging = bot_state.server_tps.map(|server_tps| server_tps.is_server_likely_hanging()).unwrap_or(false);
                     if !any_pearl && !is_hanging {
@@ -1463,7 +1462,7 @@ impl StasisModule {
         let mut remove_occupant_if_player_gets_near = self.remove_occupant_if_player_gets_near.lock();
 
         for (index, (pearl_uuid, chamber_pos, player_uuid, until)) in remove_occupant_if_player_gets_near.iter().enumerate() {
-            let player_entity = bot.entity_by::<With<Player>, (&GameProfileComponent,)>(|(profile,): &(&GameProfileComponent,)| &profile.uuid == player_uuid);
+            let player_entity = bot.any_entity_by::<&GameProfileComponent, With<Player>>(|profile: &GameProfileComponent| profile.uuid == *player_uuid);
             if until <= &Instant::now() {
                 remove_indices.push(index);
                 continue;
@@ -1472,8 +1471,8 @@ impl StasisModule {
                 && let Some(player_pos) = bot.get_entity_component::<Position>(player_entity)
             {
                 let own_pos = bot.component::<Position>();
-                if player_pos.horizontal_distance_squared_to(&chamber_pos.center()) <= 2.5f64.powi(2)
-                    && own_pos.horizontal_distance_squared_to(&chamber_pos.center()) <= 56.0f64.powi(2)
+                if player_pos.horizontal_distance_squared_to(chamber_pos.center()) <= 2.5f64.powi(2)
+                    && own_pos.horizontal_distance_squared_to(chamber_pos.center()) <= 56.0f64.powi(2)
                 {
                     info!(
                         "Pearl {} likely was removed when teleporting the owner ({}) to it (owner came back later). Removing it.",
@@ -1614,7 +1613,7 @@ impl Module for StasisModule {
 
                         let owning_player_entity_id = packet.data as i32;
                         let player_entity =
-                            bot.entity_by::<With<Player>, (&MinecraftEntityId,)>(|(entity_id,): &(&MinecraftEntityId,)| entity_id.0 == owning_player_entity_id);
+                            bot.any_entity_by::<&MinecraftEntityId, With<Player>>(|entity_id: &MinecraftEntityId| entity_id.0 == owning_player_entity_id);
 
                         if let Some(player_entity) = player_entity {
                             let game_profile = bot.entity_component::<GameProfileComponent>(player_entity);
@@ -1692,14 +1691,13 @@ impl Module for StasisModule {
                                         && let Some(oc_player_uuid) = occupant.player_uuid
                                         && oc_pearl_uuid == *pearl_uuid
                                     {
-                                        let player_entity = bot.entity_by::<With<Player>, (&EntityUuid,)>(|(entity_uuid,): &(&EntityUuid,)| {
-                                            Some(***entity_uuid) == occupant.player_uuid
-                                        });
+                                        let player_entity = bot
+                                            .any_entity_by::<&EntityUuid, With<Player>>(|entity_uuid: &EntityUuid| Some(**entity_uuid) == occupant.player_uuid);
                                         let mut added = false;
                                         if let Some(player_entity) = player_entity {
                                             let player_pos = bot.entity_component::<Position>(player_entity);
-                                            if player_pos.horizontal_distance_squared_to(&chamber_pos.center()) <= 2.0f64.powi(2)
-                                                && own_pos.horizontal_distance_squared_to(&chamber_pos.center()) <= 56.0f64.powi(2)
+                                            if player_pos.horizontal_distance_squared_to(chamber_pos.center()) <= 2.0f64.powi(2)
+                                                && own_pos.horizontal_distance_squared_to(chamber_pos.center()) <= 56.0f64.powi(2)
                                             {
                                                 info!(
                                                     "Pearl {} likely was removed when teleporting the owner ({}) to it. Removing it.",
@@ -1724,7 +1722,7 @@ impl Module for StasisModule {
                                             ));
                                         }
 
-                                        if !added && expected && own_pos.horizontal_distance_squared_to(&chamber_pos.center()) <= 56.0f64.powi(2) {
+                                        if !added && expected && own_pos.horizontal_distance_squared_to(chamber_pos.center()) <= 56.0f64.powi(2) {
                                             info!("Despawning of Pearl {} (owned by {}) was expected. Removing it.", *pearl_uuid, oc_player_uuid);
                                             remove_occupant_indices.push(occupant_index);
                                         }
@@ -1764,8 +1762,7 @@ impl Module for StasisModule {
 
                     let mut mass_adding = self.mass_adding.lock();
                     if !mass_adding.is_empty()
-                        && let Some(player_entity) =
-                            bot.entity_by::<With<Player>, (&MinecraftEntityId,)>(|(mc_id,): &(&MinecraftEntityId,)| **mc_id == packet.id)
+                        && let Some(player_entity) = bot.any_entity_by::<&MinecraftEntityId, With<Player>>(|mc_id: &MinecraftEntityId| *mc_id == packet.id)
                     {
                         let player_uuid = bot.entity_component::<EntityUuid>(player_entity);
                         if let Some((terminal_name, is_shay, index)) = mass_adding.get_mut(&*player_uuid) {
@@ -1829,8 +1826,7 @@ impl Module for StasisModule {
 
                     let mut mass_adding = self.mass_adding.lock();
                     if !mass_adding.is_empty()
-                        && let Some(player_entity) =
-                            bot.entity_by::<With<Player>, (&MinecraftEntityId,)>(|(mc_id,): &(&MinecraftEntityId,)| **mc_id == packet.id)
+                        && let Some(player_entity) = bot.any_entity_by::<&MinecraftEntityId, With<Player>>(|mc_id: &MinecraftEntityId| *mc_id == packet.id)
                     {
                         let profile = bot.entity_component::<GameProfileComponent>(player_entity);
                         if let Some((terminal_name, _is_shay, index)) = mass_adding.remove(&profile.uuid) {

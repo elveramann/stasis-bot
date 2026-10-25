@@ -3,7 +3,7 @@ use crate::{BotState, util};
 use anyhow::{anyhow, bail};
 use azalea::blocks::BlockState;
 use azalea::entity::LookDirection;
-use azalea::packet::game::SendPacketEvent;
+use azalea::packet::game::SendGamePacketEvent;
 use azalea::protocol::packets::game::s_interact::InteractionHand;
 use azalea::protocol::packets::game::{ServerboundGamePacket, ServerboundSwing, ServerboundUseItemOn};
 use azalea::{BlockPos, Client, Event};
@@ -48,7 +48,7 @@ impl Task for AffectBlockTask {
         self.started_at = Instant::now();
         self.orig_look_dir = bot.component();
         if !self.did_interact {
-            if let Some(state) = bot.world().read().get_block_state(&self.block_pos) {
+            if let Some(state) = bot.world().read().get_block_state(self.block_pos) {
                 self.orig_block_state = state;
             } else {
                 bail!("Failed to find block state of block to affect!");
@@ -68,7 +68,7 @@ impl Task for AffectBlockTask {
             };
 
             if self.started_at.elapsed() >= Duration::from_millis(100) && !self.did_interact {
-                if let Some(state) = bot.world().read().get_block_state(&self.block_pos) {
+                if let Some(state) = bot.world().read().get_block_state(self.block_pos) {
                     if state.is_air() {
                         return Ok(TaskOutcome::Failed {
                             reason: "Target block is air!".to_owned(),
@@ -85,16 +85,16 @@ impl Task for AffectBlockTask {
                     }
                 };
                 debug!("BlockHit: {block_hit:?}");
-                bot.ecs.lock().send_event(SendPacketEvent {
+                bot.ecs.lock().trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::UseItemOn(ServerboundUseItemOn {
                         block_hit,
                         hand: InteractionHand::MainHand,
-                        sequence: 0,
+                        seq: 0,
                     }),
                 });
                 // Aren't we nice?
-                bot.ecs.lock().send_event(SendPacketEvent {
+                bot.ecs.lock().trigger(SendGamePacketEvent {
                     sent_by: bot.entity,
                     packet: ServerboundGamePacket::Swing(ServerboundSwing {
                         hand: InteractionHand::MainHand,
@@ -120,7 +120,7 @@ impl Task for AffectBlockTask {
             }
 
             if self.did_interact
-                && let Some(state) = bot.world().read().get_block_state(&self.block_pos)
+                && let Some(state) = bot.world().read().get_block_state(self.block_pos)
                 && state != self.orig_block_state
             {
                 return Ok(TaskOutcome::Succeeded);
